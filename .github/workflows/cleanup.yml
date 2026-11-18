@@ -1,0 +1,35 @@
+name: cleanup
+
+on:
+  schedule:
+    - cron: "0 12 * * *" # diario, 09:00 hora de Chile (UTC-3)
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Borrar releases ya publicados
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          now=$(date -u +%s)
+          gh api "repos/$REPO/releases?per_page=100" --paginate \
+            --jq '.[] | [.tag_name, .created_at, ((.body // "") | capture("publish_at: *(?<d>[0-9TZ:+.-]+)").d // "")] | @tsv' |
+          while IFS=$'\t' read -r tag created publish_at; do
+            if [ -n "$publish_at" ]; then
+              limit=$(( $(date -u -d "$publish_at" +%s) + 48*3600 ))
+            else
+              limit=$(( $(date -u -d "$created" +%s) + 7*24*3600 ))
+            fi
+            if [ "$now" -ge "$limit" ]; then
+              echo "Borrando $tag (publish_at='$publish_at', created=$created)"
+              gh release delete "$tag" --repo "$REPO" --yes --cleanup-tag
+            else
+              echo "Conservando $tag"
+            fi
+          done
